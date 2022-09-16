@@ -62,16 +62,16 @@
         <!-- This profile is run in the CI as the first step (platform-ASSEMBLY); It must not activate
           any modules that have a dependency to the webapps. See also the referenced POMs,
           they usually define which modules are covered by the distro profile -->
-        <module>spring-boot-starter</module>
+<!--        <module>spring-boot-starter</module>-->
 
-        <module>qa</module>
+<!--        <module>qa</module>-->
 
-        <module>distro/h2-webapp</module>
+<!--        <module>distro/h2-webapp</module>-->
 
-        <module>javaee/ejb-service</module>
-        <module>javaee/ejb-client</module>
-        <module>javaee/jobexecutor-ra</module>
-        <module>javaee/jobexecutor-rar</module>
+<!--        <module>javaee/ejb-service</module>-->
+<!--        <module>javaee/ejb-client</module>-->
+<!--        <module>javaee/jobexecutor-ra</module>-->
+<!--        <module>javaee/jobexecutor-rar</module>-->
 
         <module>model-api</module>
         <module>typed-values</module>
@@ -82,17 +82,17 @@
         <module>engine-spring</module>
         <module>engine-rest</module>
 
-        <module>webapps</module>
+<!--        <module>webapps</module>-->
 
-        <module>examples/invoice</module>
+<!--        <module>examples/invoice</module>-->
 
-        <module>engine-plugins</module>
+<!--        <module>engine-plugins</module>-->
 
-        <module>distro/license-book</module>
-        <module>distro/jbossas7</module>
-        <module>distro/tomcat</module>
-        <module>distro/sql-script</module>
-        <module>distro/run</module>
+<!--        <module>distro/license-book</module>-->
+<!--        <module>distro/jbossas7</module>-->
+<!--        <module>distro/tomcat</module>-->
+<!--        <module>distro/sql-script</module>-->
+<!--        <module>distro/run</module>-->
 
         <module>clients/java</module>
 

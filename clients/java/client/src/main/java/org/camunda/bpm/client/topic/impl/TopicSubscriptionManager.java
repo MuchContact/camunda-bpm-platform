@@ -16,11 +16,8 @@
  */
 package org.camunda.bpm.client.topic.impl;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -42,6 +39,8 @@ import org.camunda.bpm.client.variable.impl.TypedValueField;
 import org.camunda.bpm.client.variable.impl.TypedValues;
 import org.camunda.bpm.client.variable.impl.VariableValue;
 
+import static java.util.Arrays.asList;
+
 /**
  * @author Tassilo Weidner
  */
@@ -51,7 +50,7 @@ public class TopicSubscriptionManager implements Runnable {
 
   protected ReentrantLock ACQUISITION_MONITOR = new ReentrantLock(false);
   protected Condition IS_WAITING = ACQUISITION_MONITOR.newCondition();
-  protected AtomicBoolean isRunning = new AtomicBoolean(false);
+  protected volatile AtomicBoolean isRunning = new AtomicBoolean(false);
 
   protected ExternalTaskServiceImpl externalTaskService;
 
@@ -62,6 +61,7 @@ public class TopicSubscriptionManager implements Runnable {
   protected Map<String, ExternalTaskHandler> externalTaskHandlers;
 
   protected Thread thread;
+  protected Map<String, Thread> consumerThreads = new ConcurrentHashMap<>();
 
   protected BackoffStrategy backoffStrategy;
   protected AtomicBoolean isBackoffStrategyDisabled;
@@ -81,16 +81,21 @@ public class TopicSubscriptionManager implements Runnable {
     this.isBackoffStrategyDisabled = new AtomicBoolean(false);
   }
 
-  public void run() {
-    while (isRunning.get()) {
-      try {
-        acquire();
-      }
-      catch (Throwable e) {
-        LOG.exceptionWhileAcquiringTasks(e);
-      }
-    }
+  protected void startNewThread(TopicSubscription subscription) {
+      String topicName = subscription.getTopicName();
+      consumerThreads.computeIfAbsent(topicName, (k) -> {
+          ConsumerRunner consumerRunner = new ConsumerRunner(k);
+          Thread thread1 = new Thread(consumerRunner);
+          thread1.start();
+          return thread1;
+      });
+
   }
+
+    public void run() {
+        subscriptions.forEach(this::prepareAcquisition);
+        subscriptions.forEach(this::startNewThread);
+    }
 
   protected void acquire() {
     taskTopicRequests.clear();
@@ -118,9 +123,32 @@ public class TopicSubscriptionManager implements Runnable {
     }
   }
 
+  protected void acquire(String topic) {
+    Optional<TopicSubscription> first = subscriptions.stream().filter(it -> it.getTopicName().equals(topic)).findFirst();
+    if (first.isPresent()) {
+        TopicSubscription topicSubscription = first.get();
+        TopicRequestDto taskTopicRequest = TopicRequestDto.fromTopicSubscription(topicSubscription, clientLockDuration);
+        List<ExternalTask> externalTasks = fetchAndLock(asList(taskTopicRequest));
+
+        externalTasks.forEach(externalTask -> {
+            String topicName = externalTask.getTopicName();
+            ExternalTaskHandler taskHandler = externalTaskHandlers.get(topicName);
+
+            if (taskHandler != null) {
+                handleExternalTask(externalTask, taskHandler);
+            } else {
+                LOG.taskHandlerIsNull(topicName);
+            }
+        });
+
+        if (!isBackoffStrategyDisabled.get()) {
+            runBackoffStrategy(externalTasks);
+        }
+    }
+  }
   protected void prepareAcquisition(TopicSubscription subscription) {
-    TopicRequestDto taskTopicRequest = TopicRequestDto.fromTopicSubscription(subscription, clientLockDuration);
-    taskTopicRequests.add(taskTopicRequest);
+//    TopicRequestDto taskTopicRequest = TopicRequestDto.fromTopicSubscription(subscription, clientLockDuration);
+//    taskTopicRequests.add(taskTopicRequest);
 
     String topicName = subscription.getTopicName();
     ExternalTaskHandler externalTaskHandler = subscription.getExternalTaskHandler();
@@ -178,16 +206,19 @@ public class TopicSubscriptionManager implements Runnable {
   }
 
   protected void subscribe(TopicSubscription subscription) {
-    if (!subscriptions.addIfAbsent(subscription)) {
-      String topicName = subscription.getTopicName();
-      throw LOG.topicNameAlreadySubscribedException(topicName);
-    }
+      if (!subscriptions.addIfAbsent(subscription)) {
+          String topicName = subscription.getTopicName();
+          throw LOG.topicNameAlreadySubscribedException(topicName);
+      }
+      prepareAcquisition(subscription);
+      subscriptions.forEach(this::startNewThread);
 
-    resume();
+      resume();
   }
 
   protected void unsubscribe(TopicSubscriptionImpl subscription) {
     subscriptions.remove(subscription);
+
   }
 
   public EngineClient getEngineClient() {
@@ -246,4 +277,27 @@ public class TopicSubscriptionManager implements Runnable {
     this.isBackoffStrategyDisabled.set(true);
   }
 
+  private  class ConsumerRunner implements Runnable{
+      private String topic;
+
+      public ConsumerRunner(String topic) {
+          this.topic = topic;
+      }
+
+      @Override
+      public void run() {
+          try {
+              while (isRunning.get()) {
+                  try {
+                      acquire(topic);
+                  } catch (Throwable e) {
+                      LOG.exceptionWhileAcquiringTasks(e);
+                  }
+              }
+          } finally {
+              consumerThreads.remove(topic);
+          }
+
+      }
+  }
 }
